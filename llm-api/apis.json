@@ -67,6 +67,64 @@
         "Provides a textual analysis of the latest rainfall radar image.",
         "Requires user confirmation due to 15 seconds processing time."
       ]
+    },
+    {
+      "name": "RTHK News",
+      "url": "http://[YOUR_HOST]/rthk/news",
+      "description": "Fetches news articles from RTHK (Radio Television Hong Kong) across various categories. This tool provides access to real-time news updates. **CRITICAL: The response to users should be short (within ~100 words) and allow them to dive into the details if they wish.**",
+      "params": [
+        {
+          "name": "section",
+          "type": "string",
+          "optional": true,
+          "description": "Optional: Comma-separated list of news sections to retrieve. Available sections include 'local', 'greaterchina', 'international', 'finance', and 'sport'. If no section is specified, news from all available sections will be returned."
+        }
+      ],
+      "capabilities": [
+        "Retrieve local news.",
+        "Retrieve Greater China news.",
+        "Retrieve international news.",
+        "Retrieve finance news.",
+        "Retrieve sport news.",
+        "Retrieve news from multiple specified sections.",
+        "Retrieve news from all available sections if no specific section is requested."
+      ]
+    },
+    {
+      "name": "Yahoo Finance Stock Data",
+      "url": "http://[YOUR_HOST]/stock/{ticker}",
+      "description": "Fetches current stock data and related financial news from Yahoo Finance for a given ticker symbol. **Only display the stock price info and related financial news when a user asks for it.** **When a user asks for 'stock price' related question, you have access to this tool. You should NEVER say you cannot provide stock price information.**",
+      "params": [
+        {
+          "name": "ticker",
+          "type": "string",
+          "optional": false,
+          "description": "The stock ticker symbol (e.g., 'AAPL', 'MSFT')."
+        }
+      ],
+      "capabilities": [
+        "Retrieve real-time stock quotes.",
+        "Access various financial metrics and news related to a stock.",
+        "Provide in-depth company information."
+      ]
+    },
+    {
+      "name": "Browse URL",
+      "url": "http://[YOUR_HOST]/browse?url={url}",
+      "description": "Navigates to a given URL and extracts the textual content of the page. This tool is useful for summarizing web pages, extracting information, or answering questions based on web content. It **MUST** be used when the user explicitly asks to 'browse' a URL, 'summarize' a web page, or 'extract information' from a given link, or when the user provides a URL that needs to be accessed to fulfill their request. It can handle most standard web pages. **CRITICAL: You have the capability to browse the web. Do not claim otherwise. You must ALWAYS attempt to browse ANY provided URL, even if it might not directly contain the final information the user seeks. If a provided URL leads to another page that contains the relevant information, you MUST navigate to that subsequent page as well.**",
+      "params": [
+        {
+          "name": "url",
+          "type": "string",
+          "optional": false,
+          "description": "The URL of the web page to browse and extract content from."
+        }
+      ],
+      "capabilities": [
+        "Extracts and summarizes textual content from any given URL.",
+        "Can be used to answer questions based on the content of a web page.",
+        "Browses the web for information."
+      ]
     }
   ]
 }

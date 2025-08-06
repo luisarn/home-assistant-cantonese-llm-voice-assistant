@@ -7,8 +7,20 @@ services:
     working_dir: /app
     volumes:
       - ./:/app
+      - ../shared:/shared
     ports:
       - "127.0.0.1:28080:3000"
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined
+    devices:
+      - /dev/dri:/dev/dri
+    user: "1000"
+    group_add:
+      # Change this number to match your "render" host group id
+      # You can get the id number by running: getent group render
+      - "91"
     environment:
       - OPENROUTER_API_KEY=YOUR_API_KEY_HERE # For visual analysis of HKO radar image
       - TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN_HERE_FIND_BOTFATHER # For sending HKO radar image and analysis result into your TG group

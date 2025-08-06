@@ -375,7 +375,6 @@ class OpenAIAgent(conversation.AbstractConversationAgent):
             }
         if len(functions) == 0:
             tool_kwargs = {}
-
         _LOGGER.info("Prompt for %s: %s", model, json.dumps(messages))
         response: ChatCompletion = await self.client.chat.completions.create(
             model=model,
@@ -384,6 +383,7 @@ class OpenAIAgent(conversation.AbstractConversationAgent):
             top_p=top_p,
             temperature=temperature,
             user=user_input.conversation_id,
+            extra_body={"reasoning": {"enabled": False}},
             **tool_kwargs,
         )
         _LOGGER.info("Response %s", json.dumps(response.model_dump(exclude_none=True)))

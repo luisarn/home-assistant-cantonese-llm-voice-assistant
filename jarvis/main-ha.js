@@ -16,10 +16,11 @@ const HA_URL = 'https://' + location.host.replace('monitor-', 'ha-');
 const EXIT_MAGIC = 'XXEXITXX';
 const REFRESH_MAGIC = 'XXREFRESHXX';
 const VOLUME_MAGIC = 'XXVOLUMEXX';
-
+const CAN_INTERRUPT = true;
 const WAKE_WORD_SPEECH_TIMEOUT = 7000;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+const NIGHT_H = 22;
 const NIGHT_VOL_EXPONENT = 0.6;
 let DAY_VOL = parseFloat(localStorage.getItem('day_volume') || '1');
 let NIGHT_VOL = parseFloat(localStorage.getItem('night_volume') || '0.15848931925');
@@ -36,9 +37,11 @@ class Store {
     alertMessage = null;
     alertExpire = 0;
 
-    vaState = STATE.INITIALIZING;
+    _vaState = STATE.INITIALIZING;
     isUserSpeaking = false;
     voiceLastActiveAt = 0;
+
+    vadState = '';
 
     lastSTT = '';
     lastSTTAnimState = 0; // 1 = fading out, 2 = changing pos, 0 = fading in or stable;
@@ -49,7 +52,92 @@ class Store {
 
     latestText = 0; // 0 = lastSTT, 1 = lastTTS
 
-    currentTime = 0;
+    mainUI = null;
+    bgImage = null;
+    _lastInteract = Date.now();
+    _currentTime = 0;
+
+    set vaState(value) {
+        this._vaState = value;
+        this.lastInteract = Date.now(); // Update lastInteract when vaState changes
+    }
+
+    get vaState() {
+        return this._vaState;
+    }
+
+    set currentTime(value) {
+        this._currentTime = value;
+        this.updateBrightness();
+    }
+
+    get currentTime() {
+        return this._currentTime;
+    }
+
+    set lastInteract(value) {
+        this._lastInteract = value;
+        this.updateBrightness();
+    }
+
+    get lastInteract() {
+        return this._lastInteract;
+    }
+
+    get bgBrightness() {
+        console.log('get bgBrightness');
+
+        let bgBrightness = 1;
+        const now = new Date(this.currentTime);
+        const currentHour = now.getHours();
+        if (currentHour >= NIGHT_H && currentHour < 24) { // 10 PM to 12 AM
+            const totalMinutes = (currentHour - NIGHT_H) * 60 + now.getMinutes();
+            // Dims from 1 to 0.3 over 2 hours (120 minutes) from 22:00 to 24:00
+            bgBrightness = 1 - ((totalMinutes / 120) * 0.7);
+        } else if (currentHour >= 0 && currentHour < 6) { // 12 AM to 6 AM (inclusive of 0, exclusive of 6)
+            bgBrightness = 0; // Stays at 0.3 during these hours
+        } else if (currentHour >= 6 && currentHour < 7) { // 6 AM to 7 AM
+            const minute = now.getMinutes();
+            bgBrightness = 0 + (minute / 60) * 0.7; // Goes from 0.3 to 1 over 1 hour
+        }
+        // Ensure brightness stays within 0 and 1
+        return Math.max(0, Math.min(1, bgBrightness));
+    }
+
+    get mainUIBrightness() {
+        console.log('get mainUIBrightness');
+        let mainUIBrightness = 1;
+        const now = new Date(this.currentTime);
+        const currentHour = now.getHours();
+        if (currentHour >= NIGHT_H || currentHour < 6) { // Only dim mainUI between 10 PM and 6 AM
+            const timeSinceLastInteract = (now.getTime() - this.lastInteract) / 1000; // in seconds
+            if (timeSinceLastInteract <= 30) {
+                mainUIBrightness = 1;
+            } else if (timeSinceLastInteract > 30 && timeSinceLastInteract <= 90) {
+                // Linearly interpolate from 1 to 0.3 as timeSinceLastInteract goes from 30 to 90 seconds
+                // (timeSinceLastInteract - 30) / (90 - 30) gives a value from 0 to 1
+                // 1 - (value * 0.7) means 1 when value is 0, and 0.3 when value is 1
+                mainUIBrightness = 1 - (((timeSinceLastInteract - 30) / 60) * 0.7);
+            } else {
+                mainUIBrightness = 0.3; // Stays at 0.3 after 90 seconds of inactivity
+            }
+        } else {
+            mainUIBrightness = 1; // Do not dim if current hour is not between 10 PM and 6 AM
+        }
+        return Math.max(0, Math.min(1, mainUIBrightness));
+    }
+
+    updateBrightness() {
+        if (!this.bgImage && !this.mainUI) return;
+        console.log('updateBrightness');
+        if (this.bgImage) {
+            this.bgImage.style.filter = `brightness(${this.bgBrightness})`;
+        }
+        if (this.mainUI) {
+            this.mainUI.style.filter = `brightness(${this.mainUIBrightness})`;
+        }
+    }
+
     constructor() {
         makeAutoObservable(this);
     }
@@ -98,7 +186,6 @@ const VoiceUI = observer(() => {
 
     return (
         <>
-            <div style={{ display: 'none' }}>{store.currentTime}</div>
             <div className="voice-overlay"
                 style={{
                     position: 'fixed',
@@ -132,7 +219,7 @@ const VoiceUI = observer(() => {
                     loop
                     autoplay
                 ></dotlottie-player>
-
+                {/* <div>{store.vadState}</div> */}
                 <div style={{
                     position: 'absolute',
                     textAlign: 'center',
@@ -181,8 +268,8 @@ const VoiceUI = observer(() => {
                     justifyContent: 'center',
                     backdropFilter: 'blur(4px) brightness(0.65)',
                     transition: 'opacity 0.3s ease-in-out',
-                    opacity: store.alertMessage && store.alertExpire > Date.now() ? 1 : 0,
-                    pointerEvents: store.alertMessage && store.alertExpire > Date.now() ? 'auto' : 'none',
+                    opacity: store.alertMessage && store.alertExpire > store.currentTime ? 1 : 0,
+                    pointerEvents: store.alertMessage && store.alertExpire > store.currentTime ? 'auto' : 'none',
                 }}
                 onClick={() => {
                     store.alertExpire = 0;
@@ -291,7 +378,7 @@ async function fetchAndCacheAudio(url, short) {
 async function playAudio(url) {
     let v = DAY_VOL;
     const currentHour = new Date().getHours();
-    if (currentHour >= 23 || currentHour < 8) { // Between 11 PM and 8 AM
+    if (currentHour >= NIGHT_H || currentHour < 8) { // Between 10 PM and 8 AM
         v = NIGHT_VOL;
     }
 
@@ -361,8 +448,12 @@ function setVAState(newState, ...args) {
             break;
 
         case STATE.WAKE_WORD_TRIGGERED:
-            pipelineActive = false;
-            store.isUserSpeaking = false;
+            let isInterrupt = !!args[0];
+            if (!isInterrupt) {
+                pipelineActive = false;
+                store.isUserSpeaking = false;
+            }
+
             const startVADAndSetTimeout = async () => {
                 if (store.vaState !== STATE.WAKE_WORD_TRIGGERED) return;
                 if (!myvad) {
@@ -371,7 +462,9 @@ function setVAState(newState, ...args) {
                     return;
                 }
                 if (!myvad.listening) myvad.start();
-                playAudio(BASE + '/activate.mp3');
+                if (!isInterrupt) {
+                    playAudio(BASE + '/activate.mp3');
+                }
                 wakeWordTimeoutId = setTimeout(() => {
                     if (store.vaState === STATE.WAKE_WORD_TRIGGERED && !pipelineActive) {
                         if (myvad && myvad.listening) myvad.pause();
@@ -436,11 +529,20 @@ function setVAState(newState, ...args) {
                     };
                     let v = DAY_VOL;
                     const currentHour = new Date().getHours();
-                    if (currentHour >= 23 || currentHour < 8) { // Between 11 PM and 8 AM
+                    if (currentHour >= NIGHT_H || currentHour < 8) { // Between 11 PM and 8 AM
                         v = NIGHT_VOL;
                     }
                     ttsAudioElement.volume = v;
                     await ttsAudioElement.play();
+
+                    if (CAN_INTERRUPT) {
+                        if (!myvad.listening) {
+                            console.log("STATE.PLAYING_TTS: Starting VAD listening.");
+                            myvad.start();
+                        } else {
+                            console.log("STATE.PLAYING_TTS: VAD already listening.");
+                        }
+                    }
                 } catch (e) {
                     panelAlert("Could not play assistant response. E2: " + e.message);
                     if (store.vaState === STATE.PLAYING_TTS) setVAState(STATE.WAKE_WORD_TRIGGERED);
@@ -499,7 +601,7 @@ async function initializeApp() {
         // bumblebee.addHotword('jarvis');
         bumblebee.addHotword('bumblebee');
         bumblebee.addHotword('hey_siri');
-        bumblebee.setSensitivity(1);
+        bumblebee.setSensitivity(0.3);
         bumblebee.setMicVolume(1.2);
         bumblebee.on('hotword', handleHotword);
     } catch (error) {
@@ -572,7 +674,7 @@ async function handleHotword(hotwordDetails) {
         setVAState(STATE.IDLE);
         return;
     }
-    setVAState(STATE.WAKE_WORD_TRIGGERED, hotwordDetails);
+    setVAState(STATE.WAKE_WORD_TRIGGERED);
 }
 
 
@@ -647,20 +749,52 @@ function initializeVAD() {
                 baseAssetPath: BASE + '/vendor/vad/',
                 redemptionFrames: 20,
                 onSpeechRealStart: () => {
-                    store.voiceLastActiveAt = Date.now();
-                    store.isUserSpeaking = true;
-                    if (wakeWordTimeoutId) clearTimeout(wakeWordTimeoutId);
-                    if (store.vaState === STATE.WAKE_WORD_TRIGGERED) initiateHAPipelineRun();
+                    store.vadState = 'onSpeechRealStart';
+                    if (store.vaState === STATE.WAKE_WORD_TRIGGERED) {
+                        store.voiceLastActiveAt = Date.now();
+                        store.isUserSpeaking = true;
+                        if (wakeWordTimeoutId) clearTimeout(wakeWordTimeoutId);
+                        if (store.vaState === STATE.WAKE_WORD_TRIGGERED) initiateHAPipelineRun();
+                    } else if (store.vaState === STATE.PLAYING_TTS && CAN_INTERRUPT) {
+                        killTTS();
+                        setVAState(STATE.WAKE_WORD_TRIGGERED, true);
+                        initiateHAPipelineRun(true);
+                    } else {
+                        console.warn(`VAD: Speech started in unexpected state: ${getStateName(store.vaState)}.`);
+                    }
                 },
                 onSpeechEnd: async (finalAudioBuffer) => {
-                    if (myvad && myvad.listening) myvad.pause();
+
+                    store.vadState = 'onSpeechEnd';
                     if (store.vaState === STATE.WAKE_WORD_TRIGGERED && pipelineActive) {
+                        console.log("VAD: Speech ended.");
+                        if (myvad && myvad.listening) {
+                            console.log("VAD: Speech ended, pausing VAD for this interaction.");
+                            myvad.pause();
+                        }
+
+                        // Send the complete utterance. processAndSendAudio will queue it.
+                        // sendAudioToHA will send it as one message (or you could adapt it to chunk if HA prefers).
+                        // The 'true' flag ensures sendHAStreamEnd is called afterwards.
                         await processAndSendAudio(finalAudioBuffer);
-                        setVAState(STATE.SENDING_AUDIO);
-                    } else if (!pipelineActive && store.vaState === STATE.WAKE_WORD_TRIGGERED) {
-                        panelAlert("Could not process your request.");
-                        setVAState(STATE.IDLE);
+                        setVAState(STATE.SENDING_AUDIO); // Transition: VAD speech done, now waiting for HA
+                    } else {
+                        console.warn(`VAD: Speech ended, but state (${getStateName(store.vaState)}) or pipelineActive (${pipelineActive}) is not receptive.`);
+                        // if (!pipelineActive && store.vaState === STATE.WAKE_WORD_TRIGGERED) {
+                        //     // Speech ended, but pipeline never started or failed early.
+                        //     panelAlert("Could not process your request.");
+                        //     setVAState(STATE.IDLE);
+                        // }
                     }
+
+                    // if (myvad && myvad.listening) myvad.pause();
+                    // if (store.vaState === STATE.WAKE_WORD_TRIGGERED && pipelineActive) {
+                    //     await processAndSendAudio(finalAudioBuffer);
+                    //     setVAState(STATE.SENDING_AUDIO);
+                    // } else if (!pipelineActive && store.vaState === STATE.WAKE_WORD_TRIGGERED) {
+                    //     panelAlert("Could not process your request.");
+                    //     setVAState(STATE.IDLE);
+                    // }
                 },
             });
             resolve();
@@ -810,14 +944,16 @@ function sendHAStreamEnd() {
     } catch (error) { pipelineActive = false; setVAState(STATE.IDLE); }
 }
 
-function initiateHAPipelineRun() {
+function initiateHAPipelineRun(interrupt) {
     if (!haWebSocket || haWebSocket.readyState !== WebSocket.OPEN) {
         panelAlert("Not connected to Home Assistant.");
         setVAState(STATE.IDLE); return;
     }
-    if (pipelineActive || store.vaState !== STATE.WAKE_WORD_TRIGGERED || !HA_ASSIST_PIPELINE_NAME) {
-        if (!HA_ASSIST_PIPELINE_NAME) panelAlert("HA Assist Pipeline Name is not configured.");
-        setVAState(STATE.IDLE); return;
+    if (!interrupt) {
+        if (pipelineActive || store.vaState !== STATE.WAKE_WORD_TRIGGERED || !HA_ASSIST_PIPELINE_NAME) {
+            if (!HA_ASSIST_PIPELINE_NAME) panelAlert("HA Assist Pipeline Name is not configured.");
+            setVAState(STATE.IDLE); return;
+        }
     }
     resetAudioStreamingState();
     currentPipelineRunId = sendMessage({
@@ -832,18 +968,71 @@ function initiateHAPipelineRun() {
     }
 }
 
+function $$$(selector, rootNode = document.body) {
+    const arr = []
+
+    const traverser = node => {
+        // 1. decline all nodes that are not elements
+        if (node.nodeType !== Node.ELEMENT_NODE) {
+            return
+        }
+
+        // 2. add the node to the array, if it matches the selector
+        if (node.matches(selector)) {
+            arr.push(node)
+        }
+
+        // 3. loop through the children
+        const children = node.children
+        if (children.length) {
+            for (const child of children) {
+                traverser(child)
+            }
+        }
+
+        // 4. check for shadow DOM, and loop through it's children
+        const shadowRoot = node.shadowRoot
+        if (shadowRoot) {
+            const shadowChildren = shadowRoot.children
+            for (const shadowChild of shadowChildren) {
+                traverser(shadowChild)
+            }
+        }
+    }
+
+    traverser(rootNode)
+
+    return arr
+}
+
 if (location.href.includes('-samsung')) {
     initializeApp().catch(initializationError => {
         panelAlert("Application failed to initialize: " + initializationError.message);
     });
-    panelAlert(<h1><center>Jarvis v0.0.2-4</center></h1>)
+    panelAlert(<h1><center>Jarvis v0.0.3-2</center></h1>)
 
     document.querySelector("body").addEventListener('click', (e) => {
         document.querySelector("body").requestFullscreen();
+        store.lastInteract = Date.now();
+    });
+    document.querySelector("body").addEventListener('touchstart', (e) => {
+        store.lastInteract = Date.now();
     });
 
+    store.mainUI = $$$('hui-view-container')[0];
+    store.bgImage = $$$('hui-view-background')[0];
+
     setInterval(() => {
-        store.currentTime = Date.now();
+        const newTime = Date.now();
+        // Update currentTime if brightness is actively changing or if it deviates by more than a minute when stable.
+        // Also update if the last interaction happened within the last 60 seconds, to ensure responsiveness.
+        // const brightnessChanging = (store.bgBrightness > 0 && store.bgBrightness < 1) || (store.mainUIBrightness > 0.3 && store.mainUIBrightness < 1);
+        const recentlyInteracted = (newTime - store.lastInteract) < 90 * 1000; // Check if lastInteract was less than 60 seconds ago
+        const timeDeviated = Math.abs(newTime - store.currentTime) > 10 * 1000;
+
+        if (recentlyInteracted || timeDeviated) {
+            store.currentTime = newTime;
+        }
     }, 1000)
 
     // The content of your main.css is embedded here
@@ -879,5 +1068,6 @@ if (location.href.includes('-samsung')) {
     const styleElement = document.createElement('style');
     styleElement.textContent = APP_CSS;
     document.head.appendChild(styleElement);
+
 
 }
