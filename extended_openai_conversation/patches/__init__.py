@@ -9,7 +9,7 @@ from openai import AsyncAzureOpenAI, AsyncOpenAI
 from openai._exceptions import AuthenticationError, OpenAIError
 from openai.types.chat.chat_completion import ChatCompletion, ChatCompletionMessage, Choice
 import yaml
-
+import time
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_should_expose
 from homeassistant.config_entries import ConfigEntry
@@ -74,7 +74,12 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 # hass.data key for agent.
 DATA_AGENT = "agent"
 
-
+class dotdict(dict):
+    """dot.notation access to dictionary attributes"""
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+    
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up OpenAI Conversation."""
     await async_setup_services(hass, config)
@@ -266,8 +271,8 @@ class OpenAIAgent(conversation.AbstractConversationAgent):
             )
             memories = list(map(lambda m: m['summary'], [r for r in ret.values()][0]['items']))
             memories_list = '\n'.join(f"{i+1}. {item}" for i, item in enumerate(memories))
-            _LOGGER.error([ret, memories_list])
-            raw_prompt += memories_list
+            # _LOGGER.error([ret, memories_list])
+            raw_prompt = raw_prompt.replace('$$$$MEMORIES$$$$', memories_list)
         except HomeAssistantError as e:
             _LOGGER.error(e)
 
@@ -375,7 +380,10 @@ class OpenAIAgent(conversation.AbstractConversationAgent):
             }
         if len(functions) == 0:
             tool_kwargs = {}
-        _LOGGER.info("Prompt for %s: %s", model, json.dumps(messages))
+        _LOGGER.error("Prompt for %s: %s", model, json.dumps(messages))
+        _LOGGER.error("tool_kwargs %s: %s", model, json.dumps(tool_kwargs))
+
+        # print(messages)
         response: ChatCompletion = await self.client.chat.completions.create(
             model=model,
             messages=messages,
@@ -386,11 +394,21 @@ class OpenAIAgent(conversation.AbstractConversationAgent):
             extra_body={"reasoning": {"enabled": False}},
             **tool_kwargs,
         )
-        _LOGGER.info("Response %s", json.dumps(response.model_dump(exclude_none=True)))
+        _LOGGER.error("Response %s", json.dumps(response.model_dump(exclude_none=True)))
         if response.usage is not None and response.usage.total_tokens > context_threshold:
             await self.truncate_message_history(messages, exposed_entities, user_input)
         choice: Choice = response.choices[0]
         message = choice.message
+        if choice.finish_reason == "stop" and message.content and "<tool_call>" in message.content and "</tool_call>" in message.content:
+            tool_calls = []
+            for tool_call_str in [s.strip() for s in message.content.split("<tool_call>") if s.strip() and "</tool_call>" in s]:
+                try:
+                    tool_calls.append({"function": json.loads(tool_call_str.split("</tool_call>")[0])})
+                except json.JSONDecodeError:
+                    _LOGGER.warning("Could not parse tool call from content: %s", tool_call_str)
+            if tool_calls:
+                message.tool_calls = tool_calls
+            return await self.execute_tool_calls(user_input, messages, message, exposed_entities, n_requests + 1)
         if choice.finish_reason == "function_call":
             return await self.execute_function_call(user_input, messages, message, exposed_entities, n_requests + 1)
         if choice.finish_reason == "tool_calls":
@@ -458,16 +476,23 @@ class OpenAIAgent(conversation.AbstractConversationAgent):
         """Execute tool calls if requested by OpenAI."""
         messages.append(message.model_dump(exclude_none=True))
         for tool in message.tool_calls:
-            function_name = tool.function.name
+            try:
+                function_name = tool.function.name
+            except:
+                function_name = tool["function"]["name"]
             function = next(
                 (s for s in self.get_functions() if s["spec"]["name"] == function_name),
                 None,
             )
             if function is not None:
                 result = await self.execute_tool_function(user_input, tool, exposed_entities, function)
+                try:
+                    tool_id = tool.id
+                except:
+                    tool_id = time.time()
                 messages.append(
                     {
-                        "tool_call_id": tool.id,
+                        "tool_call_id": tool_id,
                         "role": "tool",
                         "name": function_name,
                         "content": str(result),
@@ -487,9 +512,17 @@ class OpenAIAgent(conversation.AbstractConversationAgent):
         """Execute a tool function."""
         function_executor = get_function_executor(function["function"]["type"])
         try:
-            arguments = json.loads(tool.function.arguments)
-        except json.decoder.JSONDecodeError as err:
-            raise ParseArgumentsFailed(tool.function.arguments) from err
+            args = tool.function.arguments
+        except:
+            args = tool["function"]["arguments"]
+
+        if isinstance(args, str):
+            try:
+                arguments = json.loads(args)
+            except json.decoder.JSONDecodeError as err:
+                raise ParseArgumentsFailed(args) from err
+        else:
+            arguments = args
 
         result = await function_executor.execute(
             self.hass, function["function"], arguments, user_input, exposed_entities

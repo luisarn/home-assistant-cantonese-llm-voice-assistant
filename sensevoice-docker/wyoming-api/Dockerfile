@@ -13,10 +13,11 @@ RUN \
 RUN \
     git clone https://github.com/ser/wyoming-whisper-api-client.git wyoming-whisper-api-client \
     && cd wyoming-whisper-api-client \
+    && echo -e "websockets" >> requirements.txt \
     && script/setup
 
 WORKDIR /wyoming-whisper-api-client
-COPY const.py /wyoming-whisper-api-client/wyoming_whisper_api_client/const.py 
+# COPY const.py /wyoming-whisper-api-client/wyoming_whisper_api_client/const.py 
 COPY handler.py /wyoming-whisper-api-client/wyoming_whisper_api_client/handler.py 
 
 

@@ -16,7 +16,7 @@ const HA_URL = 'https://' + location.host.replace('monitor-', 'ha-');
 const EXIT_MAGIC = 'XXEXITXX';
 const REFRESH_MAGIC = 'XXREFRESHXX';
 const VOLUME_MAGIC = 'XXVOLUMEXX';
-const CAN_INTERRUPT = true;
+const CAN_INTERRUPT = false;
 const WAKE_WORD_SPEECH_TIMEOUT = 7000;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
