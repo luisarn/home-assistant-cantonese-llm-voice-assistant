@@ -312,22 +312,19 @@ async function updateActiveWarningsInRedis() {
 // This background polling is separate from the page's refresh rate.
 updateActiveWarningsInRedis();
 setInterval(updateActiveWarningsInRedis, 60 * 1000); // Poll API every 60 seconds
-
 /**
- * Endpoint to display a simple HTML page with active weather warnings.
- * Data is read from Redis, and the page auto-refreshes every 30 seconds.
+ * Endpoint to serve the data for the weather warnings page.
+ * Provides active warnings as HTML and the last update time in JSON format.
  */
-app.get('/weather/hk/warnings-page', async (req, res) => {
+app.get('/weather/hk/warnings-data', async (req, res) => {
     try {
         const storedWarningsJson = await redis.get(HKO_WARNINGS_REDIS_KEY);
         const lastUpdateIso = await redis.get(HKO_WARNINGS_LAST_UPDATE_KEY);
 
-        // If Redis is empty or the key hasn't been set yet, default to an empty array.
         const activeWarnings = storedWarningsJson ? JSON.parse(storedWarningsJson) : [];
         const lastUpdate = lastUpdateIso ? new Date(lastUpdateIso).toLocaleString('en-HK', { timeZone: 'Asia/Hong_Kong' }) : 'N/A';
 
-
-        // Generate HTML response based on data from Redis
+        // Generate HTML for the image grid
         let imageGridHtml = '<p style="font-size: 1.2em;">No active weather warnings.</p>';
         if (activeWarnings.length > 0) {
             imageGridHtml = activeWarnings.map(warning =>
@@ -335,55 +332,97 @@ app.get('/weather/hk/warnings-page', async (req, res) => {
             ).join('');
         }
 
-        const html = `
-            <!DOCTYPE html>
-            <html lang="zh-HK">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <meta http-equiv="refresh" content="30">
-                <title>HKO Active Weather Warnings</title>
-                <style>
-                    body {
-                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-                        background-color: transparent; /* For embedding in iframes etc. */
-                        margin: 0;
-                        padding: 0;
-                        text-align: center;
-                        color: #333;
-                    }
-                    #warnings-grid {
-                        display: flex;
-                        flex-wrap: wrap;
-                        justify-content: center;
-                        align-items: center;
-                        gap: 15px;
-                        margin-top: 5px;
-                    }
-                    p {
-                        font-size: 0.8em;
-                        color: #555;
-                        margin-top: 10px;
-                    }
-                </style>
-            </head>
-            <body>
-                <div id="warnings-grid">
-                    ${imageGridHtml}
-                </div>
-                <p>最後更新: ${lastUpdate}.</p>
-            </body>
-            </html>
-        `;
-
-        res.setHeader('Content-Type', 'text/html');
-        res.send(html);
-
+        res.json({
+            imageGridHtml: imageGridHtml,
+            lastUpdate: lastUpdate
+        });
     } catch (error) {
-        console.error('Failed to generate weather warnings page from Redis data:', error.message);
-        res.status(500).send('<h1>Error</h1><p>Failed to retrieve weather warnings. Please try again later.</p>');
+        console.error('Failed to fetch weather warnings data from Redis:', error.message);
+        res.status(500).json({ error: 'Failed to retrieve weather warnings data.' });
     }
 });
+
+
+/**
+ * Endpoint to display a simple HTML page for active weather warnings.
+ * The page uses JavaScript to fetch and display data, refreshing every 30 seconds.
+ */
+app.get('/weather/hk/warnings-page', (req, res) => {
+    const html = `
+        <!DOCTYPE html>
+        <html lang="zh-HK">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta name="color-scheme" content="dark">
+            <title>HKO Active Weather Warnings</title>
+            <style>
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                    background-color: transparent; /* For embedding in iframes etc. */
+                    margin: 0;
+                    padding: 0;
+                    text-align: center;
+                    color: #333;
+                }
+                #warnings-grid {
+                    display: flex;
+                    flex-wrap: wrap;
+                    justify-content: center;
+                    align-items: center;
+                    gap: 15px;
+                    margin-top: 5px;
+                    min-height: 60px; /* Avoid layout shift while loading */
+                }
+                #last-update {
+                    font-size: 0.8em;
+                    color: #fff;
+                    margin-top: 10px;
+                }
+            </style>
+        </head>
+        <body>
+            <div id="warnings-grid">
+                <p style="font-size: 1.2em;">Loading warnings...</p>
+            </div>
+            <p id="last-update"></p>
+
+            <script>
+                const warningsGrid = document.getElementById('warnings-grid');
+                const lastUpdateElem = document.getElementById('last-update');
+
+                async function fetchAndUpdateWarnings() {
+                    try {
+                        const response = await fetch('/weather/hk/warnings-data');
+                        if (!response.ok) {
+                            throw new Error('Network response was not ok: ' + response.statusText);
+                        }
+                        const data = await response.json();
+
+                        warningsGrid.innerHTML = data.imageGridHtml;
+                        lastUpdateElem.textContent = '最後更新: ' + data.lastUpdate + '.';
+
+                    } catch (error) {
+                        console.error('Failed to fetch weather warnings:', error);
+                        warningsGrid.innerHTML = '<p style="font-size: 1.2em; color: red;">Failed to load warnings. Retrying...</p>';
+                        lastUpdateElem.textContent = ''; // Clear last update time on error
+                    }
+                }
+
+                // Fetch immediately on load
+                fetchAndUpdateWarnings();
+
+                // Then fetch every 30 seconds
+                setInterval(fetchAndUpdateWarnings, 30000);
+            </script>
+        </body>
+        </html>
+    `;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+});
+
 
 app.get('/rthk/news', async (req, res) => {
     const newsUrls = {
