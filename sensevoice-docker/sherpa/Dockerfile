@@ -18,4 +18,3 @@ RUN pip install sherpa-onnx websockets soundfile pyopenssl
 
 RUN git clone https://github.com/k2-fsa/sherpa-onnx.git /sherpa-onnx
 
-#ENTRYPOINT ["/start.sh"]
