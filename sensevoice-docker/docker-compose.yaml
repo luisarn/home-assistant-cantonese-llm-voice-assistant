@@ -24,10 +24,10 @@ services:
     # user: 1000:1000
     # ports:
       # - 100.64.0.1:6006:6006
-    command: bash /start.sh
-    volumes:
-      - ./sherpa/start.sh:/start.sh:ro
-      - ./sherpa/models:/models
-      - ./sherpa/tokens-cht.txt:/tokens.txt
+    # command: bash /start.sh
+    # volumes:
+    #  - ./sherpa/start.sh:/start.sh:ro
+    #  - ./sherpa/models:/models
+    #  - ./sherpa/tokens-cht.txt:/tokens.txt
     environment:
       - NUM_THREADS=6
