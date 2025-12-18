@@ -13,8 +13,8 @@ RUN \
     curl \
     bzip2
 
-RUN python3 -m venv /venv
-RUN pip install sherpa-onnx websockets soundfile pyopenssl
+# RUN python3 -m venv /venv
+# RUN pip install sherpa-onnx websockets soundfile pyopenssl
 
-RUN git clone https://github.com/k2-fsa/sherpa-onnx.git /sherpa-onnx
+# RUN git clone https://github.com/k2-fsa/sherpa-onnx.git /sherpa-onnx
 
